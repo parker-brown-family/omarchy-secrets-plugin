@@ -1,0 +1,5 @@
+# Planning notes for one machine; they name its folders.
+docs/plans/
+# Pictures and leftovers from a test run. The ones the README uses are in docs/img.
+tests/shots/
+.env
