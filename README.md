@@ -64,6 +64,22 @@ o.bind("SUPER + CTRL + SHIFT + K", "Save copied key", { panel = "brownfamilyspor
 hl.layer_rule({ match = { namespace = "^omarchy-secrets$" }, no_anim = true, animation = "none" })
 ```
 
+## Remove
+
+```
+omarchy plugin remove brownfamilysports.secrets
+```
+
+Then delete the two lines you added to `~/.config/hypr/bindings.lua`, and, if you made them, the two links in `~/.local/bin` and the folder `~/.config/omarchy-secrets`. Your `.env` files stay exactly as they are.
+
+## What it reads and writes
+
+- **Reads** the clipboard when the card opens, and the names (never the values) in `.env` files under your search folders.
+- **Writes** the `.env` file you pick, and a `.gitignore` beside it only after you say yes to that.
+- **Edits** `~/.local/state/omarchy/clipboard-history.json`, Omarchy's own clipboard history, to take out the one entry that is the key you just saved. Nothing else in it is changed.
+- **Keeps** its own settings in `~/.config/omarchy-secrets/config.json`, written the first time you change the search folders.
+- **Runs** `git` to ask whether a file is ignored, and `wl-paste`, `wl-copy`, `jq`, `find`, `awk` and `notify-send`. It makes no network connection.
+
 ## For coding agents
 
 Two commands do the work, and the card is a face on them. Put them on your `PATH` and an agent can ask for a key without ever seeing it:
@@ -78,7 +94,7 @@ secret-keys has OPENROUTER_API_KEY     # exit 0 when ./.env has a value for it
 secret-take OPENROUTER_API_KEY --wait  # asks you to copy it, then saves the next key copied
 ```
 
-`secret-take` prints the name, the file and what happened. It exits 3 when git does not ignore the file and 4 when nothing that looks like a key was copied. `secret-take --help` and `secret-keys --help` list the rest.
+`secret-take` prints the name, the file and what happened. It exits 3 when git does not ignore the file, 4 when nothing that looks like a key was copied, and 5 when the file is read-only. `secret-take --help` and `secret-keys --help` list the rest.
 
 ## What it does not do
 

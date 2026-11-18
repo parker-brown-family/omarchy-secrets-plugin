@@ -297,6 +297,37 @@ check "copy never prints the key" '[[ $out != *"$KEY"* ]]'
 "$keys" copy EMPTY_ONE >/dev/null 2>&1; rc=$?
 check "copy refuses an empty value" '[[ $rc -eq 2 ]]'
 
+echo "refuses a file it cannot write"
+fresh; copy "$KEY"; echo "A=1" >.env; chmod 400 .env
+out=$("$take" OPENROUTER_API_KEY 2>&1); rc=$?
+check "a read-only file exits 5 and is left as it was" '[[ $rc -eq 5 && $(cat .env) == "A=1" && $(stat -c %a .env) == 400 ]]'
+check "the clipboard still holds the key" '[[ $(cat "$FAKE_CLIP") == "$KEY" ]]'
+
+echo "a file name with pattern characters is taken literally by git"
+fresh; copy "$KEY"; git init -q .; mkdir 'we[i]rd'; echo '.env' >.gitignore; echo "X=1" >weird.txt
+"$take" OPENROUTER_API_KEY --file 'we[i]rd/.env' >/dev/null 2>&1; rc=$?
+check "saves into a folder named with brackets" '[[ $rc -eq 0 && -s "we[i]rd/.env" ]]'
+
+echo "a broken config file is never written over"
+fresh; mkdir -p "$HOME/.config/omarchy-secrets"; echo '{ "roots": [ half' >"$HOME/.config/omarchy-secrets/config.json"
+mkdir -p "$HOME/Elsewhere"; "$keys" folders add "$HOME/Elsewhere" >/dev/null 2>&1; rc=$?
+check "folders add refuses and leaves the file as it was" '[[ $rc -eq 2 && $(cat "$HOME/.config/omarchy-secrets/config.json") == "{ \"roots\": [ half" ]]'
+check "scan still works, on the defaults" '[[ $("$keys" scan | jq -r ".roots | length") -eq 4 ]]'
+rm -f "$HOME/.config/omarchy-secrets/config.json"
+
+echo "no part of a key is ever a command argument"
+fresh; copy "$KEY"; history_with "$KEY"
+real_jq=$(command -v jq)
+cat >"$root/fakebin/jq" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$root/jq-args"
+exec "$real_jq" "\$@"
+EOF
+chmod +x "$root/fakebin/jq"; : >"$root/jq-args"
+"$take" OPENROUTER_API_KEY --json >/dev/null 2>&1; copy "$KEY"; "$keys" peek >/dev/null 2>&1
+rm -f "$root/fakebin/jq"
+check "jq was run, and never saw the key or its first characters in its arguments" '[[ -s $root/jq-args ]] && ! grep -q "sk-or" "$root/jq-args"'
+
 echo
 echo "$pass passed, $fail failed"
 ((fail == 0))

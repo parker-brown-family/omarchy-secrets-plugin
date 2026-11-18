@@ -92,7 +92,7 @@ git_state() {
   local dir=${1%/*} base=${1##*/}
   if [[ $(git -C "$dir" rev-parse --is-inside-work-tree 2>/dev/null) != true ]]; then
     echo not-git
-  elif git -C "$dir" ls-files --error-unmatch -- "$base" >/dev/null 2>&1; then
+  elif git --literal-pathspecs -C "$dir" ls-files --error-unmatch -- "$base" >/dev/null 2>&1; then
     echo tracked
   elif git -C "$dir" check-ignore -q -- "$base" 2>/dev/null; then
     echo ignored

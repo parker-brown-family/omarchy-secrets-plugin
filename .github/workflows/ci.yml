@@ -1,0 +1,20 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The manifest is valid JSON with the fields the shell needs
+        run: jq -e '.schemaVersion == 1 and (.id | length > 0) and (.entryPoints.overlay | length > 0)' manifest.json
+      - name: The two commands, against a fake clipboard
+        run: bash tests/run.sh
+      - name: The card's logic
+        run: node tests/model.test.js
