@@ -11,6 +11,9 @@
 # the theme, the fonts and the two helper scripts, is the real thing.
 #
 # Usage: tests/ui.sh [OUTPUT_DIR]     (default: tests/shots)
+#
+# UI_SCALE=2 draws everything at twice the size, for pictures that will be
+# enlarged. UI_ONLY=<scenario> runs one scenario and skips the checks.
 
 set -uo pipefail
 
@@ -18,6 +21,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/.." && pwd)
 out=${1:-$here/shots}
 omarchy=${OMARCHY_PATH:-/usr/share/omarchy}
+scale=${UI_SCALE:-1}
 real_home=$HOME
 
 for tool in xvfb-run xdotool import quickshell jq; do
@@ -196,6 +200,18 @@ local)
   shot result
   key Return
   ;;
+film)
+  # One run from the hotkey to the summary, a picture after every key.
+  shot open
+  key Tab; shot mark-one
+  key Down; shot down-one
+  key Down; shot down-two
+  key Tab; shot mark-two
+  key Return; shot name
+  key Return; shot question
+  key Return; shot saved
+  key Return
+  ;;
 empty)
   shot notice
   key Return
@@ -219,17 +235,24 @@ check() { if eval "$2"; then ok "$1"; else no "$1"; fi; }
 scenario() {
   local name=$1 payload=$2
   env -u WAYLAND_DISPLAY -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u XDG_DATA_HOME -u XDG_CACHE_HOME \
-    HOME="$H" XDG_RUNTIME_DIR="$T/rt" QT_QPA_PLATFORM=xcb \
+    HOME="$H" XDG_RUNTIME_DIR="$T/rt" QT_QPA_PLATFORM=xcb QT_SCALE_FACTOR="$scale" \
     PATH="$T/fakebin:$PATH" FAKE_CLIP="$T/clip" FAKE_NOTES="$T/notes" \
     SECRETS_PAYLOAD="$payload" SCENARIO="$name" OUT="$out" LOG="$T/log.$name" SHELL_ROOT="$T/shell" \
     OMARCHY_PATH="$omarchy" \
-    xvfb-run -a -s "-screen 0 1280x800x24" "$T/drive.sh" >"$T/drive.$name" 2>&1
+    xvfb-run -a -s "-screen 0 $((1280 * scale))x$((800 * scale))x24" "$T/drive.sh" >"$T/drive.$name" 2>&1
   local rc=$?
   check "$name: the overlay came up and was driven" "[[ $rc -eq 0 ]]"
   grep -E ' (WARN|ERROR).*(qml|Secrets|Model)' "$T/log.$name" | grep -v 'qt.qpa' | head -n 8
 }
 
 : >"$T/notes"
+
+if [[ -n ${UI_ONLY:-} ]]; then
+  printf '%s' "$KEY" >"$T/clip"
+  scenario "$UI_ONLY" "${UI_PAYLOAD:-{\}}"
+  echo "$pass passed, $fail failed. Pictures: $out"
+  exit $((fail > 0))
+fi
 
 echo "take: the key on the clipboard goes into a project, then two more"
 printf '%s' "$KEY" >"$T/clip"
