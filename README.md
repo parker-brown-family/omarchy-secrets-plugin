@@ -1,5 +1,9 @@
 # Secrets, an Omarchy shell plugin
 
+[![The demo film: a copied key crosses from the clipboard to .env](docs/img/film.jpg)](https://github.com/parker-brown-family/omarchy-secrets-plugin/releases/download/v0.1.0/secrets-demo-1080p60.mp4)
+
+**[The demo film](https://github.com/parker-brown-family/omarchy-secrets-plugin/releases/download/v0.1.0/secrets-demo-1080p60.mp4)**, a minute and a half. The link downloads it in full quality (1080p, 77 MB).
+
 Press Copy on the site that shows an API key, press a hotkey, pick the project and name the key. It is written to that project's `.env`, the clipboard is cleared, and that one copy is taken out of Omarchy's clipboard history.
 
 ![Picking the project a copied key goes to](preview.png)
