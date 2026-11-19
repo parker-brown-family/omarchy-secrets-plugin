@@ -23,6 +23,22 @@ Item {
   readonly property string keysBin: pluginDir + "/bin/secret-keys"
   readonly property string takeBin: pluginDir + "/bin/secret-take"
 
+  // Every word a person reads comes from i18n/<language>.json, in the
+  // language picked under Omarchy's Setup. English answers for any string a
+  // language lacks. t(key, a, b) fills %1 and %2; tn(key, count) picks the
+  // plural form and puts the count in %1.
+  Commons.Translations { id: strings; directory: root.pluginDir + "/i18n" }
+  readonly property var words: Model.translator(
+    function(key) { return strings.t(key) },
+    function(key, count) { return strings.tn(key, count) },
+    function(n) { return Commons.I18n.formatNumber(n) })
+  function t() { return root.words.t.apply(null, arguments) }
+  function tn() { return root.words.tn.apply(null, arguments) }
+  Connections {
+    target: strings
+    function onStringsChanged() { if (root.opened) root.rebuild() }
+  }
+
   // Shares the [menu] surface tokens, as the clipboard manager and the emoji
   // picker do, so a theme that styles the menu styles this too.
   property color background: Commons.Color.menu.background
@@ -182,9 +198,9 @@ Item {
       root.peek = root.parse(out, { ok: false, reason: "unreadable" })
       if (!root.opened) return
       if (!root.peek.ok && !root.source && (root.view === "projects" || root.view === "name"))
-        root.showNotice("No key on the clipboard", [
+        root.showNotice(root.t("notice.noKey.title"), [
           root.peekReason(root.peek.reason),
-          "Press Copy on the site that shows the key, then press this hotkey again."
+          root.t("notice.noKey.how")
         ], "")
       root.rebuild()
     })
@@ -244,12 +260,22 @@ Item {
   // ------------------------------------------------------------- view logic
 
   function peekReason(reason) {
-    if (reason === "empty") return "The clipboard is empty."
-    if (reason === "lines") return "The clipboard holds several lines, which is not a key."
-    if (reason === "spaces") return "The clipboard holds text with spaces in it, which is not a key."
-    if (reason === "quote") return "The clipboard holds something with a single quote in it, which a .env file cannot carry safely."
-    if (reason === "short") return "The clipboard holds fewer than 8 characters, which is too short to be a key."
-    return "The clipboard could not be read."
+    if (reason === "empty" || reason === "lines" || reason === "spaces" || reason === "quote" || reason === "short")
+      return root.t("peek." + reason)
+    return root.t("peek.unreadable")
+  }
+
+  // Why nothing was saved. The helper names its reason with a short word
+  // (cannot-write, tracked, not-ignored, not-found, no-key); each has a line in
+  // the catalogs. Anything else is shown in the helper's own English.
+  function failureLine(res) {
+    if (!res) return root.t("result.failed.noReason")
+    var known = ["cannot-write", "tracked", "not-ignored", "not-found", "no-key"]
+    if (known.indexOf(res.error) >= 0)
+      return root.t("error." + res.error, (res.files || []).map(function(f) { return Model.shortPath(f, root.home) }).join(", "))
+    if (res.message) return res.message
+    if (res.status !== undefined) return root.t("result.failed.status", res.status)
+    return root.t("result.failed.noReason")
   }
 
   function showNotice(title, lines, back) {
@@ -267,21 +293,21 @@ Item {
   function projectSub(project) {
     var usual = Model.saveFiles(project)[0]
     var where = Model.shortPath(project.root, root.home)
-    if (!usual.file) return where + " · no .env yet"
-    return where + " · " + usual.base + " · " + Model.plural(usual.file.names.length, "key", "keys")
+    if (!usual.file) return where + " · " + root.t("project.noEnv")
+    return where + " · " + usual.base + " · " + root.tn("project.keys", usual.file.names.length)
   }
 
   function fileLines(project) {
     var lines = [{ text: Model.shortPath(project.dir, root.home), tone: "strong" }]
     if (project.files.length === 0)
-      lines.push({ text: "No .env yet. One will be created, readable by you alone.", tone: "plain" })
+      lines.push({ text: root.t("detail.noEnvYet"), tone: "plain" })
     for (var f = 0; f < project.files.length; f++) {
       var file = project.files[f]
       lines.push({ text: "", tone: "plain" })
-      lines.push({ text: file.base + (file.example ? "  (example file)" : file.backup ? "  (backup copy)" : ""), tone: "strong" })
-      if (file.names.length === 0) lines.push({ text: "no names in it", tone: "dim" })
+      lines.push({ text: file.base + (file.example ? "  " + root.t("file.example") : file.backup ? "  " + root.t("file.backup") : ""), tone: "strong" })
+      if (file.names.length === 0) lines.push({ text: root.t("file.noNames"), tone: "dim" })
       for (var n = 0; n < file.names.length; n++)
-        lines.push({ text: (file.names[n].set ? "● " : "○ ") + file.names[n].name + (file.names[n].set || file.example ? "" : "   empty"), tone: file.names[n].set ? "plain" : "dim" })
+        lines.push({ text: (file.names[n].set ? "● " : "○ ") + file.names[n].name + (file.names[n].set || file.example ? "" : "   " + root.t("file.empty")), tone: file.names[n].set ? "plain" : "dim" })
     }
     return lines
   }
@@ -301,16 +327,16 @@ Item {
   function rebuild() {
     var rows = [], data = [], detail = []
     var chip = "", tone = "plain"
-    if (root.source) chip = "from " + root.source.label
-    else if (root.peek === null) chip = "reading clipboard…"
-    else if (root.peek.ok) chip = root.peek.hint + "•••• · " + root.peek.length + " characters"
-    else { chip = "no key on the clipboard"; tone = "warn" }
+    if (root.source) chip = root.t("chip.from", root.source.label)
+    else if (root.peek === null) chip = root.t("chip.reading")
+    else if (root.peek.ok) chip = root.t("chip.key", root.peek.hint, root.peek.length)
+    else { chip = root.t("chip.noKey"); tone = "warn" }
 
     if (root.view === "projects") {
-      root.titleText = root.source ? "Send " + root.source.name + " to" : "Save copied key to"
-      root.placeholder = "Search projects"
+      root.titleText = root.source ? root.t("title.sendTo", root.source.name) : root.t("title.saveTo")
+      root.placeholder = root.t("search.projects")
       var count = Object.keys(root.marked).length
-      root.hints = "↵ choose" + (count ? " " + count + " marked" : "") + "   Tab mark several   Ctrl+K key store   Ctrl+F folders   Esc close"
+      root.hints = "↵ " + root.t("hint.choose") + (count ? " " + root.tn("hint.marked", count) : "") + "   Tab " + root.t("hint.markSeveral") + "   Ctrl+K " + root.t("hint.keyStore") + "   Ctrl+F " + root.t("hint.folders") + "   Esc " + root.t("hint.close")
       var projects = Model.filterProjects(root.scan.projects, root.filterText)
       // The project the key is coming from is not somewhere to send it.
       if (root.source) projects = projects.filter(function(pr) { return Model.makeTarget(pr, root.fileChoice[pr.dir]).path !== root.source.file })
@@ -319,112 +345,112 @@ Item {
         data.push({ kind: "project", project: projects[i] })
       }
       if (root.scanLoaded) {
-        rows.push({ title: "+ Add a folder to search", sub: Model.plural(root.scan.roots.length, "folder", "folders") + " searched today", tone: "dim", marked: false })
+        rows.push({ title: root.t("project.addFolder"), sub: root.tn("project.foldersSearched", root.scan.roots.length), tone: "dim", marked: false })
         data.push({ kind: "addFolder" })
       }
     } else if (root.view === "name") {
-      root.titleText = "Name the key for " + (root.targets.length === 1 ? root.targets[0].label + "/" + root.targets[0].base : Model.plural(root.targets.length, "project", "projects"))
-      root.placeholder = "Type a name, or pick one"
+      root.titleText = root.targets.length === 1 ? root.t("title.nameFor", root.targets[0].label + "/" + root.targets[0].base) : root.tn("title.nameForMany", root.targets.length)
+      root.placeholder = root.t("search.typeName")
       var others = root.targets.length === 1 ? Model.saveFiles(root.targets[0].project).length - 1 : 0
-      root.hints = "↵ save   ↑↓ pick" + (others > 0 ? "   Tab other file" : "") + "   Esc back"
-      var names = Model.nameSuggestions(root.filterText, root.peek && root.peek.ok ? root.peek.guess : null, root.targets, root.scan.projects)
+      root.hints = "↵ " + root.t("hint.save") + "   ↑↓ " + root.t("hint.pick") + (others > 0 ? "   Tab " + root.t("hint.otherFile") : "") + "   Esc " + root.t("hint.back")
+      var names = Model.nameSuggestions(root.filterText, root.peek && root.peek.ok ? root.peek.guess : null, root.targets, root.scan.projects, root.words)
       for (var n = 0; n < names.length; n++) {
         rows.push({ title: names[n].name, sub: names[n].why, tone: names[n].kind === "replace" ? "warn" : "plain", marked: false })
         data.push({ kind: "name", name: names[n].name })
       }
     } else if (root.view === "confirm") {
-      root.titleText = "Before saving " + root.keyName
+      root.titleText = root.t("title.before", root.keyName)
       root.placeholder = ""
-      root.hints = "↵ go ahead   Esc back"
+      root.hints = "↵ " + root.t("hint.goAhead") + "   Esc " + root.t("hint.back")
       var p = root.plan
       for (var r = 0; r < p.replaces.length; r++) {
-        rows.push({ title: "Replace the value in " + p.replaces[r], sub: "It already has a value there. The old one is not kept.", tone: "warn", marked: false })
+        rows.push({ title: root.t("confirm.replace.title", p.replaces[r]), sub: root.t("confirm.replace.sub"), tone: "warn", marked: false })
         data.push({ kind: "info" })
       }
       for (var g = 0; g < p.needsIgnore.length; g++) {
-        rows.push({ title: "Add " + p.needsIgnore[g].base + " to .gitignore in " + p.needsIgnore[g].label, sub: "git does not ignore it there today, so the key could be committed.", tone: "warn", marked: false })
+        rows.push({ title: root.t("confirm.ignore.title", p.needsIgnore[g].base, p.needsIgnore[g].label), sub: root.t("confirm.ignore.sub"), tone: "warn", marked: false })
         data.push({ kind: "info" })
       }
       for (var v = 0; v < p.otherVcs.length; v++) {
-        rows.push({ title: "Not checked: " + p.otherVcs[v], sub: "This plugin only checks git. Keeping the file out of that system is yours to do.", tone: "warn", marked: false })
+        rows.push({ title: root.t("confirm.vcs.title", p.otherVcs[v]), sub: root.t("confirm.vcs.sub"), tone: "warn", marked: false })
         data.push({ kind: "info" })
       }
     } else if (root.view === "result") {
       var res = root.result
       root.placeholder = ""
       if (res && res.ok) {
-        root.titleText = "Saved " + res.name
-        root.hints = "↵ done   A save it to another project"
+        root.titleText = root.t("title.saved", res.name)
+        root.hints = "↵ " + root.t("hint.done") + "   A " + root.t("hint.saveAnother")
         for (var s = 0; s < res.results.length; s++) {
           var one = res.results[s]
-          rows.push({ title: Model.shortPath(one.file, root.home), sub: (one.action === "replaced" ? "old value replaced" : one.action === "filled" ? "empty placeholder filled in" : "added") + (one.ignoreAdded ? " · " + Model.baseName(one.file) + " added to .gitignore" : ""), tone: "plain", marked: true })
+          rows.push({ title: Model.shortPath(one.file, root.home), sub: root.t(one.action === "replaced" ? "result.replaced" : one.action === "filled" ? "result.filled" : "result.added") + (one.ignoreAdded ? " · " + root.t("result.ignoreAdded", Model.baseName(one.file)) : ""), tone: "plain", marked: true })
           data.push({ kind: "info" })
         }
         if (res.source === "clipboard") {
-          rows.push(res.clipboard === "cleared" ? { title: "Clipboard cleared", sub: "The key is no longer on it.", tone: "plain", marked: true }
-            : res.clipboard === "changed" ? { title: "Clipboard left alone", sub: "Something newer had been copied since.", tone: "plain", marked: false }
-            : { title: "Clipboard STILL HOLDS THE KEY", sub: "It could not be cleared. Copy something else over it.", tone: "warn", marked: false })
+          rows.push(res.clipboard === "cleared" ? { title: root.t("result.clip.cleared.title"), sub: root.t("result.clip.cleared.sub"), tone: "plain", marked: true }
+            : res.clipboard === "changed" ? { title: root.t("result.clip.changed.title"), sub: root.t("result.clip.changed.sub"), tone: "plain", marked: false }
+            : { title: root.t("result.clip.failed.title"), sub: root.t("result.clip.failed.sub"), tone: "warn", marked: false })
           data.push({ kind: "info" })
-          rows.push(res.history === "removed" ? { title: "Removed from clipboard history", sub: Model.plural(res.historyRemoved, "entry", "entries") + " removed. Every other entry is untouched.", tone: "plain", marked: true }
-            : res.history === "none" ? { title: "Clipboard history had no copy of it", sub: "Looked, and found nothing to remove.", tone: "plain", marked: false }
-            : res.history === "no-file" ? { title: "No clipboard history on this machine", sub: "There was no history file to look in.", tone: "plain", marked: false }
-            : { title: "Clipboard history NOT checked", sub: "It could not be read or safely edited. Open it (Super+Ctrl+V) and delete the entry.", tone: "warn", marked: false })
+          rows.push(res.history === "removed" ? { title: root.t("result.history.removed.title"), sub: root.tn("result.history.removed.sub", res.historyRemoved), tone: "plain", marked: true }
+            : res.history === "none" ? { title: root.t("result.history.none.title"), sub: root.t("result.history.none.sub"), tone: "plain", marked: false }
+            : res.history === "no-file" ? { title: root.t("result.history.noFile.title"), sub: root.t("result.history.noFile.sub"), tone: "plain", marked: false }
+            : { title: root.t("result.history.unchecked.title"), sub: root.t("result.history.unchecked.sub"), tone: "warn", marked: false })
           data.push({ kind: "info" })
         } else {
-          rows.push({ title: "Clipboard not used", sub: "The key went from one file to the other.", tone: "plain", marked: false })
+          rows.push({ title: root.t("result.clip.unused.title"), sub: root.t("result.clip.unused.sub"), tone: "plain", marked: false })
           data.push({ kind: "info" })
         }
       } else {
-        root.titleText = "Not saved"
-        root.hints = "↵ close   Esc back"
-        rows.push({ title: "Nothing was written", sub: res && res.message ? res.message : "The helper gave no reason.", tone: "warn", marked: false })
+        root.titleText = root.t("title.notSaved")
+        root.hints = "↵ " + root.t("hint.close") + "   Esc " + root.t("hint.back")
+        rows.push({ title: root.t("result.failed.title"), sub: root.failureLine(res), tone: "warn", marked: false })
         data.push({ kind: "info" })
       }
     } else if (root.view === "keys") {
-      root.titleText = "Key store"
-      root.placeholder = "Search names"
-      root.hints = "↵ open   Ctrl+F folders   Esc close"
-      chip = root.scanLoaded ? "names and places only" : "looking…"
+      root.titleText = root.t("title.keyStore")
+      root.placeholder = root.t("search.names")
+      root.hints = "↵ " + root.t("hint.open") + "   Ctrl+F " + root.t("hint.folders") + "   Esc " + root.t("hint.close")
+      chip = root.scanLoaded ? root.t("chip.namesOnly") : root.t("chip.looking")
       tone = "plain"
       var index = Model.filterKeys(Model.keyIndex(root.scan.projects), root.filterText)
       for (var k = 0; k < index.length; k++) {
         var empty = index[k].places.filter(function(pl) { return !pl.set }).length
         var exposed = index[k].places.filter(function(pl) { return pl.git === "not-ignored" || pl.git === "tracked" }).length
-        rows.push({ title: index[k].name, sub: Model.plural(index[k].places.length, "project", "projects") + (empty ? " · " + empty + " empty" : "") + (exposed ? " · " + exposed + " not ignored by git" : ""), tone: exposed ? "warn" : "plain", marked: false })
+        rows.push({ title: index[k].name, sub: root.tn("count.projects", index[k].places.length) + (empty ? " · " + root.t("keys.empty", empty) : "") + (exposed ? " · " + root.t("keys.exposed", exposed) : ""), tone: exposed ? "warn" : "plain", marked: false })
         data.push({ kind: "key", key: index[k] })
       }
     } else if (root.view === "places") {
       root.titleText = root.activeKey.name
       root.placeholder = ""
-      root.hints = "↵ send to another project   C copy to clipboard   Esc back"
-      chip = "the value is never shown"
+      root.hints = "↵ " + root.t("hint.sendAnother") + "   C " + root.t("hint.copy") + "   Esc " + root.t("hint.back")
+      chip = root.t("chip.neverShown")
       tone = "plain"
       for (var pl = 0; pl < root.activeKey.places.length; pl++) {
-        var place = root.activeKey.places[pl], gl = Model.gitLine(place.git, place.vcs, root.scanPending)
-        rows.push({ title: place.label + "/" + place.base, sub: (place.set ? "has a value" : "empty") + (place.backup ? " · backup copy" : "") + " · " + gl.text, tone: gl.tone === "warn" || gl.tone === "bad" ? "warn" : "plain", marked: false })
+        var place = root.activeKey.places[pl], gl = Model.gitLine(place.git, place.vcs, root.scanPending, root.words)
+        rows.push({ title: place.label + "/" + place.base, sub: root.t(place.set ? "place.hasValue" : "place.empty") + (place.backup ? " · " + root.t("place.backup") : "") + " · " + gl.text, tone: gl.tone === "warn" || gl.tone === "bad" ? "warn" : "plain", marked: false })
         data.push({ kind: "place", place: place })
       }
     } else if (root.view === "folders") {
-      root.titleText = "Search folders"
+      root.titleText = root.t("title.folders")
       root.placeholder = ""
-      root.hints = "↵ add   Del remove   ← → depth   Esc back"
-      chip = root.scan.configured ? "" : "defaults, nothing saved yet"
+      root.hints = "↵ " + root.t("hint.add") + "   Del " + root.t("hint.remove") + "   ← → " + root.t("hint.depth") + "   Esc " + root.t("hint.back")
+      chip = root.scan.configured ? "" : root.t("chip.defaults")
       tone = "plain"
       for (var f = 0; f < root.scan.roots.length; f++) {
         var rt = root.scan.roots[f]
         var inside = root.scan.projects.filter(function(pr) { return pr.root === rt.path })
         var withKeys = inside.filter(function(pr) { return pr.files.some(Model.isSaveable) }).length
-        rows.push({ title: Model.shortPath(rt.path, root.home), sub: rt.exists ? Model.plural(inside.length, "project", "projects") + " · " + withKeys + " with a .env" : "not on this machine, skipped", tone: rt.exists ? "plain" : "dim", marked: false })
+        rows.push({ title: Model.shortPath(rt.path, root.home), sub: rt.exists ? root.tn("count.projects", inside.length) + " · " + root.t("folders.withEnv", withKeys) : root.t("folders.missing"), tone: rt.exists ? "plain" : "dim", marked: false })
         data.push({ kind: "root", path: rt.path })
       }
-      rows.push({ title: "+ Add a folder", sub: "Its sub-folders become projects.", tone: "dim", marked: false })
+      rows.push({ title: root.t("folders.add.title"), sub: root.t("folders.add.sub"), tone: "dim", marked: false })
       data.push({ kind: "addFolder" })
-      rows.push({ title: "Depth: " + root.scan.depth, sub: "How many folders down to look for a project nested inside another.", tone: "plain", marked: false })
+      rows.push({ title: root.t("folders.depth.title", root.scan.depth), sub: root.t("folders.depth.sub"), tone: "plain", marked: false })
       data.push({ kind: "depth" })
     } else if (root.view === "browse") {
-      root.titleText = "Add " + Model.shortPath(root.browse.path, root.home)
-      root.placeholder = "Search folders here"
-      root.hints = "Tab add this folder   ↵ open   ← up   Esc back"
+      root.titleText = root.t("title.addFolder", Model.shortPath(root.browse.path, root.home))
+      root.placeholder = root.t("search.foldersHere")
+      root.hints = "Tab " + root.t("hint.addThisFolder") + "   ↵ " + root.t("hint.open") + "   ← " + root.t("hint.up") + "   Esc " + root.t("hint.back")
       chip = ""
       var q = root.filterText.toLowerCase()
       for (var d = 0; d < root.browse.dirs.length; d++) {
@@ -435,7 +461,7 @@ Item {
     } else if (root.view === "notice") {
       root.titleText = root.notice.title
       root.placeholder = ""
-      root.hints = (root.notice.back ? "↵ back" : "↵ close") + "   Ctrl+K key store   Esc close"
+      root.hints = "↵ " + root.t(root.notice.back ? "hint.back" : "hint.close") + "   Ctrl+K " + root.t("hint.keyStore") + "   Esc " + root.t("hint.close")
       for (var l = 0; l < root.notice.lines.length; l++) {
         rows.push({ title: root.notice.lines[l], sub: "", tone: l === 0 ? "warn" : "plain", marked: false })
         data.push({ kind: "info" })
@@ -443,8 +469,8 @@ Item {
     }
 
     if (root.view === "result" || root.view === "notice") chip = ""
-    if (root.busy === "saving") root.hints = "saving…"
-    else if (root.busy === "checking") root.hints = "checking git…"
+    if (root.busy === "saving") root.hints = root.t("busy.saving")
+    else if (root.busy === "checking") root.hints = root.t("busy.checking")
 
     root.chipText = chip
     root.chipTone = tone
@@ -457,51 +483,51 @@ Item {
     var current = data[root.selectedIndex]
     if (root.view === "projects") {
       if (current && current.kind === "project") detail = root.fileLines(current.project)
-      else if (current) detail = root.scan.roots.map(function(rt) { return { text: Model.shortPath(rt.path, root.home) + (rt.exists ? "" : "   not found"), tone: rt.exists ? "plain" : "dim" } })
-      else if (!root.scanLoaded) detail = [{ text: "Looking for projects…", tone: "dim" }]
+      else if (current) detail = root.scan.roots.map(function(rt) { return { text: Model.shortPath(rt.path, root.home) + (rt.exists ? "" : "   " + root.t("detail.notFound")), tone: rt.exists ? "plain" : "dim" } })
+      else if (!root.scanLoaded) detail = [{ text: root.t("detail.lookingProjects"), tone: "dim" }]
     } else if (root.view === "name") {
-      if (current) detail = root.planLines(Model.savePlan(current.name, root.targets, root.checks))
+      if (current) detail = root.planLines(Model.savePlan(current.name, root.targets, root.checks, root.words))
     } else if (root.view === "confirm") {
       detail = root.planLines(root.plan)
     } else if (root.view === "result") {
       detail = [
-        { text: "The key was never shown, typed or put in a command.", tone: "dim" },
+        { text: root.t("result.detail.never"), tone: "dim" },
         { text: "", tone: "plain" },
-        { text: "Agents read it from the project's .env, as before.", tone: "dim" }
+        { text: root.t("result.detail.agents"), tone: "dim" }
       ]
     } else if (root.view === "keys") {
       if (current) {
         detail = [{ text: current.key.name, tone: "strong" }]
         for (var c = 0; c < current.key.places.length; c++) {
-          var cp = current.key.places[c], cg = Model.gitLine(cp.git, cp.vcs, root.scanPending)
+          var cp = current.key.places[c], cg = Model.gitLine(cp.git, cp.vcs, root.scanPending, root.words)
           detail.push({ text: "", tone: "plain" })
           detail.push({ text: (cp.set ? "● " : "○ ") + cp.label + "/" + cp.base, tone: "plain" })
-          detail.push({ text: (cp.set ? "has a value" : "empty") + (cp.backup ? " · backup copy" : "") + " · " + cg.text, tone: cg.tone === "warn" || cg.tone === "bad" ? "warn" : "dim" })
+          detail.push({ text: root.t(cp.set ? "place.hasValue" : "place.empty") + (cp.backup ? " · " + root.t("place.backup") : "") + " · " + cg.text, tone: cg.tone === "warn" || cg.tone === "bad" ? "warn" : "dim" })
         }
       } else if (root.scanLoaded) {
-        detail = [{ text: root.filterText ? "No name matches." : "No keys found in the search folders.", tone: "dim" }]
+        detail = [{ text: root.t(root.filterText ? "keys.noMatch" : "keys.none"), tone: "dim" }]
       }
     } else if (root.view === "places") {
       detail = [
-        { text: "↵  Send to another project", tone: "strong" },
-        { text: "Copied from this file straight into the other. The clipboard is not used.", tone: "dim" },
+        { text: "↵  " + root.t("places.send.title"), tone: "strong" },
+        { text: root.t("places.send.sub"), tone: "dim" },
         { text: "", tone: "plain" },
-        { text: "C  Copy to the clipboard", tone: "strong" },
-        { text: "Marked sensitive, so clipboard history keeps no copy. Paste it where it is needed.", tone: "dim" }
+        { text: "C  " + root.t("places.copy.title"), tone: "strong" },
+        { text: root.t("places.copy.sub"), tone: "dim" }
       ]
     } else if (root.view === "folders") {
       detail = [
-        { text: "Every folder directly inside a search folder is a project. Deeper folders count when they hold a .env.", tone: "plain" },
+        { text: root.t("folders.detail.what"), tone: "plain" },
         { text: "", tone: "plain" },
-        { text: "Hidden folders and dependency folders such as node_modules are skipped.", tone: "dim" },
+        { text: root.t("folders.detail.skipped"), tone: "dim" },
         { text: "", tone: "plain" },
-        { text: "Kept in " + Model.shortPath(root.scan.config, root.home), tone: "dim" }
+        { text: root.t("folders.detail.kept", Model.shortPath(root.scan.config, root.home)), tone: "dim" }
       ]
     } else if (root.view === "browse") {
       detail = [
         { text: Model.shortPath(root.browse.path, root.home), tone: "strong" },
         { text: "", tone: "plain" },
-        { text: "Tab adds this folder to the search. Its " + Model.plural(root.browse.dirs.length, "sub-folder becomes a project", "sub-folders become projects") + ".", tone: "plain" }
+        { text: root.tn("browse.detail", root.browse.dirs.length), tone: "plain" }
       ]
     }
     root.detail = detail
@@ -578,7 +604,7 @@ Item {
       root.go("places")
     } else if (root.view === "places") {
       if (!current) return
-      if (!current.place.set) { root.showNotice(root.activeKey.name + " is empty there", ["There is no value in " + current.place.label + "/" + current.place.base + " to send."], "places"); return }
+      if (!current.place.set) { root.showNotice(root.t("places.emptyThere", root.activeKey.name), [root.t("places.nothingToSend", current.place.label + "/" + current.place.base)], "places"); return }
       root.source = { file: current.place.file, label: current.place.label, name: root.activeKey.name }
       root.marked = ({})
       root.go("projects")
@@ -595,13 +621,13 @@ Item {
   // Decide what stands between a chosen name and the save: nothing, a
   // question for the person, or a refusal.
   function proceed() {
-    var plan = Model.savePlan(root.keyName, root.targets, root.checks)
+    var plan = Model.savePlan(root.keyName, root.targets, root.checks, root.words)
     if (!plan.checked) { root.busy = "checking"; root.rebuild(); return }
     root.plan = plan
     if (plan.tracked.length > 0) {
-      root.showNotice("git already tracks " + plan.tracked.join(", "), [
-        "A key saved there would be committed, and adding the file to .gitignore would not change that.",
-        "Stop tracking it first, with git rm --cached, then save again."
+      root.showNotice(root.t("notice.tracked.title", plan.tracked.join(", ")), [
+        root.t("notice.tracked.why"),
+        root.t("notice.tracked.fix")
       ], root.source ? "projects" : "name")
       return
     }
@@ -618,7 +644,7 @@ Item {
     root.rebuild()
     root.run(argv, function(code, out) {
       root.busy = ""
-      root.result = root.parse(out, { ok: false, message: "The helper exited with status " + code + " and no report." })
+      root.result = root.parse(out, { ok: false, status: code })
       root.loadScan()
       if (root.opened) root.go("result")
     })
@@ -638,11 +664,11 @@ Item {
   function copyPlace() {
     var current = root.rowData[root.selectedIndex]
     if (!current || current.kind !== "place") return
-    if (!current.place.set) { root.showNotice(root.activeKey.name + " is empty there", ["There is no value in " + current.place.label + "/" + current.place.base + " to copy."], "places"); return }
+    if (!current.place.set) { root.showNotice(root.t("places.emptyThere", root.activeKey.name), [root.t("places.nothingToCopy", current.place.label + "/" + current.place.base)], "places"); return }
     var name = root.activeKey.name
     root.run([root.keysBin, "copy", name, "--file", current.place.file], function(code, out) {
-      if (code !== 0) { root.showNotice("Not copied", ["The clipboard could not be reached."], "places"); return }
-      Quickshell.execDetached(["notify-send", "--app-name=Secrets", "Copied " + name, "On the clipboard, marked sensitive. Clipboard history keeps no copy."])
+      if (code !== 0) { root.showNotice(root.t("copy.failed.title"), [root.t("copy.failed.sub")], "places"); return }
+      Quickshell.execDetached(["notify-send", "--app-name=Secrets", root.t("copy.done.title", name), root.t("copy.done.body")])
       root.dismiss()
     })
   }
@@ -888,7 +914,9 @@ Item {
                 readonly property bool oneLine: sub.length === 0
 
                 width: ListView.view.width
-                height: root.rowHeight
+                // A row grows for a long line. A warning cut off with "…" is worse
+                // than a taller row, and other languages run longer than English.
+                height: Math.max(root.rowHeight, rowText.implicitHeight + Style.spacing.rowPaddingX * 2)
                 radius: root.cornerRadius
                 color: hasCursor ? root.selectedBackground : "transparent"
 
@@ -906,6 +934,7 @@ Item {
                 }
 
                 Column {
+                  id: rowText
                   anchors.left: parent.left
                   anchors.right: parent.right
                   anchors.leftMargin: Style.space(12) + (row.marked ? tick.implicitWidth + Style.space(8) : 0)
@@ -921,9 +950,9 @@ Item {
                     opacity: row.tone === "dim" ? 0.72 : 1
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.title
-                    elide: Text.ElideMiddle
-                    wrapMode: row.oneLine ? Text.Wrap : Text.NoWrap
-                    maximumLineCount: row.oneLine ? 2 : 1
+                    elide: Text.ElideRight
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
                   }
 
                   Text {
@@ -936,6 +965,8 @@ Item {
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 4
                   }
                 }
 
@@ -956,7 +987,7 @@ Item {
               visible: displayModel.count === 0
               anchors.centerIn: parent
               width: parent.width - 2 * root.contentMargin
-              text: root.view === "name" ? "Type a name for the key." : !root.scanLoaded ? "Looking…" : root.filterText ? "Nothing matches " + root.filterText + "." : "Nothing here yet."
+              text: root.view === "name" ? root.t("empty.typeName") : !root.scanLoaded ? root.t("empty.looking") : root.filterText ? root.t("empty.noMatch", root.filterText) : root.t("empty.nothing")
               color: root.foreground
               opacity: 0.7
               font.family: root.fontFamily

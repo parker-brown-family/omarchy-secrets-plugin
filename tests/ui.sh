@@ -14,6 +14,8 @@
 #
 # UI_SCALE=2 draws everything at twice the size, for pictures that will be
 # enlarged. UI_ONLY=<scenario> runs one scenario and skips the checks.
+# UI_LANG=<code> (de, ja, zh-CN ...) sets Omarchy's display language in the
+# temp HOME, so the card is photographed in that language.
 
 set -uo pipefail
 
@@ -68,7 +70,7 @@ ShellRoot {
 EOF
 grep -v 'WlrLayershell.namespace' "$repo/Secrets.qml" >"$T/shell/plugin/Secrets.qml"
 cp "$repo/Model.js" "$T/shell/plugin/"
-cp -r "$repo/bin" "$repo/lib" "$T/shell/plugin/"
+cp -r "$repo/bin" "$repo/lib" "$repo/i18n" "$T/shell/plugin/"
 
 cat >"$T/fakebin/wl-paste" <<'EOF'
 #!/bin/bash
@@ -110,6 +112,9 @@ touch -d '9 days ago' "$W/field-notes"
 touch -d '12 days ago' "$W/next-site"
 jq -n --arg s "$KEY" '[{type:"text",text:"an earlier copy"},{type:"text",text:$s},{type:"text",text:"another earlier copy"}]' \
   >"$H/.local/state/omarchy/clipboard-history.json"
+
+# Omarchy keeps the display language in one small file; no file is English.
+[[ -n ${UI_LANG:-} ]] && mkdir -p "$H/.config/omarchy" && printf '%s\n' "$UI_LANG" >"$H/.config/omarchy/language"
 
 # The real theme and fonts, read only, so the pictures look like the desktop.
 [[ -e $real_home/.local/state/omarchy/current ]] && ln -s "$real_home/.local/state/omarchy/current" "$H/.local/state/omarchy/current"
@@ -216,6 +221,14 @@ empty)
   shot notice
   key Return
   ;;
+broken)
+  # The save works, and the card must say plainly that the history was not checked.
+  type_ "field"
+  key Return Return
+  sleep 1.5 # the helper tries the history file more than once before giving up
+  shot result
+  key Return
+  ;;
 esac
 sleep 0.6
 kill "$qs" 2>/dev/null
@@ -249,6 +262,7 @@ scenario() {
 
 if [[ -n ${UI_ONLY:-} ]]; then
   printf '%s' "$KEY" >"$T/clip"
+  [[ $UI_ONLY == broken ]] && printf 'not json' >"$H/.local/state/omarchy/clipboard-history.json"
   scenario "$UI_ONLY" "${UI_PAYLOAD:-{\}}"
   echo "$pass passed, $fail failed. Pictures: $out"
   exit $((fail > 0))
@@ -277,7 +291,13 @@ echo "keys: the key store lists names, and copies one marked sensitive"
 scenario keys '{"mode":"keys"}'
 check "the value reached the clipboard" '[[ $(cat "$T/clip") == "sk_test_madeupmadeupmadeup" ]]'
 check "it was marked sensitive" '[[ $(cat "$T/clip.args" 2>/dev/null) == "--sensitive" ]]'
-check "a notification said so, without the value" 'grep -q "Copied STRIPE_SECRET_KEY" "$T/notes" && ! grep -q madeup "$T/notes"'
+# The notification is in the language under test: the title is that language's
+# copy.done.title, or its base language's (es for es-MX), or English.
+ui_lang=${UI_LANG:-en}
+said=$(jq -rn --arg k copy.done.title '[inputs | .[$k] | select(type == "string")][0]' \
+  $(for c in "$ui_lang" "${ui_lang%%-*}" en; do [[ -r $repo/i18n/$c.json ]] && printf '%s ' "$repo/i18n/$c.json"; done))
+said=${said//%1/STRIPE_SECRET_KEY}
+check "a notification said so in the language under test, without the value" 'grep -qF "$said" "$T/notes" && ! grep -q madeup "$T/notes"'
 
 echo "folders: a search folder is added from the browser"
 printf '%s' "$KEY" >"$T/clip"
@@ -295,6 +315,13 @@ echo "empty: no key on the clipboard"
 printf '%s' "just some words" >"$T/clip"
 scenario empty '{}'
 check "nothing was written anywhere new" '[[ ! -e $W/field-notes/.env ]]'
+
+echo "broken: a clipboard history file that cannot be read"
+printf '%s' "$KEY" >"$T/clip"
+printf 'not json' >"$H/.local/state/omarchy/clipboard-history.json"
+scenario broken '{}'
+check "the key was still saved" '[[ $(cat "$W/field-notes/.env" 2>/dev/null) == "OPENROUTER_API_KEY=$KEY" ]]'
+check "the history file it could not read was left exactly as it was" '[[ $(cat "$H/.local/state/omarchy/clipboard-history.json") == "not json" ]]'
 
 echo "isolation"
 check "the run left the real config folder alone" '[[ $real_config_before == "$(ls -la "$real_home/.config/omarchy-secrets" 2>&1)" ]]'

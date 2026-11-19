@@ -13,9 +13,48 @@ function shortPath(path, home) {
   return p
 }
 
-function plural(n, one, many) {
-  return n + " " + (n === 1 ? one : many)
+// Fill %1, %2 ... in a catalog string. Done here, and not with Qt's arg(),
+// so the same code runs under node in the tests.
+function fmt(text, args) {
+  var out = String(text)
+  for (var i = 0; i < (args || []).length; i++)
+    out = out.split("%" + (i + 1)).join(args[i] === undefined || args[i] === null ? "" : String(args[i]))
+  return out
 }
+
+// The two calls every function here uses for text a person reads:
+// t(key, a, b) for a plain string and tn(key, count, a) for one that counts,
+// where %1 is the count. `lookup` and `lookupPlural` find the string for the
+// language in use (i18n/<code>.json); the card passes Omarchy's own, the
+// tests pass the English catalog.
+function translator(lookup, lookupPlural, formatNumber) {
+  var number = formatNumber || function(n) { return String(n) }
+  return {
+    t: function(key) { return fmt(lookup(key), Array.prototype.slice.call(arguments, 1)) },
+    tn: function(key, count) {
+      return fmt(lookupPlural(key, count), [number(count)].concat(Array.prototype.slice.call(arguments, 2)))
+    }
+  }
+}
+
+// A translator over one catalog object, with English plural rules: what the
+// tests use, and what any caller gets when it passes none.
+function catalogTranslator(catalog) {
+  function lookup(key) {
+    var v = catalog[key]
+    if (v && typeof v === "object") v = v.other
+    return typeof v === "string" ? v : key
+  }
+  function lookupPlural(key, count) {
+    var v = catalog[key]
+    if (v && typeof v === "object") v = count === 1 && v.one ? v.one : v.other
+    return typeof v === "string" ? v : key
+  }
+  return translator(lookup, lookupPlural)
+}
+
+// With no catalog a string is its own key, so a missing one shows on screen.
+var KEYS = catalogTranslator({})
 
 // Files a key can be saved to: example files are templates and backup copies
 // are leftovers, so neither is offered.
@@ -102,7 +141,8 @@ function isName(text) {
 //
 // A typed filter narrows the list. A typed name that is not in it is offered
 // as a new name, after any existing names it matches.
-function nameSuggestions(query, guess, targets, projects) {
+function nameSuggestions(query, guess, targets, projects, L) {
+  L = L || KEYS
   var rows = [], seen = {}
   function add(name, kind, why) {
     if (!name || seen[name]) return
@@ -110,15 +150,14 @@ function nameSuggestions(query, guess, targets, projects) {
     rows.push({ name: name, kind: kind, why: why })
   }
   var many = targets.length > 1
-  function where(target) { return many ? " in " + target.label : "" }
 
-  if (guess) add(guess, "guess", "what this key looks like")
+  if (guess) add(guess, "guess", L.t("name.guess"))
 
   var t, i, file, names
   for (t = 0; t < targets.length; t++) {
     names = namesIn(targets[t].file)
     for (i = 0; i < names.length; i++)
-      if (!names[i].set) add(names[i].name, "empty", "waiting empty" + where(targets[t]))
+      if (!names[i].set) add(names[i].name, "empty", many ? L.t("name.emptyIn", targets[t].label) : L.t("name.empty"))
   }
   for (t = 0; t < targets.length; t++) {
     var have = {}
@@ -130,19 +169,19 @@ function nameSuggestions(query, guess, targets, projects) {
       if (!file.example) continue
       for (i = 0; i < file.names.length; i++)
         if (!have[file.names[i].name])
-          add(file.names[i].name, "wanted", "listed in " + file.base + where(targets[t]) + ", not set")
+          add(file.names[i].name, "wanted", many ? L.t("name.wantedIn", file.base, targets[t].label) : L.t("name.wanted", file.base))
     }
   }
   for (t = 0; t < targets.length; t++) {
     names = namesIn(targets[t].file)
     for (i = 0; i < names.length; i++)
-      if (names[i].set) add(names[i].name, "replace", "has a value" + where(targets[t]) + " · will be replaced")
+      if (names[i].set) add(names[i].name, "replace", many ? L.t("name.replaceIn", targets[t].label) : L.t("name.replace"))
   }
 
   var index = keyIndex(projects)
   index.sort(function(a, b) { return b.places.length - a.places.length || (a.name < b.name ? -1 : 1) })
   for (i = 0; i < index.length; i++)
-    add(index[i].name, "elsewhere", "used in " + plural(index[i].places.length, "project", "projects"))
+    add(index[i].name, "elsewhere", L.tn("name.elsewhere", index[i].places.length))
 
   var q = normalizeName(query)
   if (!q) return rows
@@ -155,7 +194,7 @@ function nameSuggestions(query, guess, targets, projects) {
   out = out.map(function(o) { return o.row })
   // Existing names that match come first, so Enter on a half-typed name
   // picks the real one; the typed text as a new name is always the last row.
-  if (isName(q) && !seen[q]) out.push({ name: q, kind: "new", why: "new name" })
+  if (isName(q) && !seen[q]) out.push({ name: q, kind: "new", why: L.t("name.new") })
   return out
 }
 
@@ -197,37 +236,39 @@ function filterKeys(index, query) {
 }
 
 // One line on how git treats a file, and whether it needs a person's eye.
-function gitLine(git, vcs, pending) {
-  if ((git === null || git === undefined) && pending) return { text: "checking git…", tone: "plain" }
-  if (git === "ignored") return { text: "ignored by git", tone: "ok" }
-  if (git === "not-ignored") return { text: "NOT ignored by git", tone: "warn" }
-  if (git === "tracked") return { text: "tracked by git: would be committed", tone: "bad" }
-  if (git === "not-git" && vcs) return { text: "under " + vcs + ", which this plugin does not check", tone: "warn" }
-  if (git === "not-git") return { text: "not in a git repository", tone: "plain" }
-  return { text: "git not checked", tone: "plain" }
+function gitLine(git, vcs, pending, L) {
+  L = L || KEYS
+  if ((git === null || git === undefined) && pending) return { text: L.t("git.checking"), tone: "plain", pending: true }
+  if (git === "ignored") return { text: L.t("git.ignored"), tone: "ok" }
+  if (git === "not-ignored") return { text: L.t("git.notIgnored"), tone: "warn" }
+  if (git === "tracked") return { text: L.t("git.tracked"), tone: "bad" }
+  if (git === "not-git" && vcs) return { text: L.t("git.otherVcs", vcs), tone: "warn" }
+  if (git === "not-git") return { text: L.t("git.notGit"), tone: "plain" }
+  return { text: L.t("git.unknown"), tone: "plain" }
 }
 
 // What saving NAME into each target will do, from the scan and the git check.
 // `checks` maps a file path to {exists, git, vcs}; a file missing from it has
 // not been checked yet and says so.
-function savePlan(name, targets, checks) {
+function savePlan(name, targets, checks, L) {
+  L = L || KEYS
   var steps = [], needsIgnore = [], tracked = [], replaces = [], otherVcs = []
   for (var t = 0; t < targets.length; t++) {
     var target = targets[t], check = checks[target.path]
     var existing = null, names = namesIn(target.file)
     for (var i = 0; i < names.length; i++) if (names[i].name === name) existing = names[i]
     var does
-    if (!target.file) does = "create " + target.base + " and add " + name
-    else if (existing && existing.set) { does = "replace the value of " + name; replaces.push(target.label) }
-    else if (existing) does = "fill in " + name
-    else does = "add " + name
+    if (!target.file) does = L.t("plan.create", target.base, name)
+    else if (existing && existing.set) { does = L.t("plan.replace", name); replaces.push(target.label) }
+    else if (existing) does = L.t("plan.fill", name)
+    else does = L.t("plan.add", name)
     var step = { label: target.label, base: target.base, file: target.path, does: does, git: null }
-    if (!check) step.git = { text: "checking git…", tone: "plain" }
+    if (!check) step.git = { text: L.t("git.checking"), tone: "plain", pending: true }
     else {
-      step.git = gitLine(check.git, check.vcs)
+      step.git = gitLine(check.git, check.vcs, false, L)
       if (check.git === "not-ignored") {
         needsIgnore.push({ label: target.label, base: target.base })
-        step.git = { text: "will add " + target.base + " to .gitignore first", tone: "warn" }
+        step.git = { text: L.t("plan.willIgnore", target.base), tone: "warn" }
       }
       if (check.git === "tracked") tracked.push(target.label + "/" + target.base)
       if (check.git === "not-git" && check.vcs) otherVcs.push(target.label + " (" + check.vcs + ")")
@@ -236,14 +277,14 @@ function savePlan(name, targets, checks) {
   }
   return {
     steps: steps, needsIgnore: needsIgnore, tracked: tracked, replaces: replaces, otherVcs: otherVcs,
-    checked: steps.every(function(s) { return s.git.text !== "checking git…" }),
+    checked: steps.every(function(s) { return s.git.pending !== true }),
     needsConfirm: needsIgnore.length > 0 || replaces.length > 0 || otherVcs.length > 0
   }
 }
 
 if (typeof module !== "undefined") {
   module.exports = {
-    baseName: baseName, shortPath: shortPath, plural: plural, isSaveable: isSaveable,
+    baseName: baseName, shortPath: shortPath, fmt: fmt, translator: translator, catalogTranslator: catalogTranslator, isSaveable: isSaveable,
     saveFiles: saveFiles, makeTarget: makeTarget, matchRank: matchRank, filterProjects: filterProjects,
     normalizeName: normalizeName, isName: isName, nameSuggestions: nameSuggestions,
     keyIndex: keyIndex, filterKeys: filterKeys, gitLine: gitLine, savePlan: savePlan

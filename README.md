@@ -53,6 +53,16 @@ Press Ctrl+F to choose where projects are looked for. The defaults are `~/Work`,
 
 ![Search folders](docs/img/folders.png)
 
+## Languages
+
+The card follows the language picked under Omarchy's Setup, and so do the desktop notifications. It comes in English, German, Japanese, Simplified Chinese, Spanish, Brazilian Portuguese and French. In any other language it shows English. What the two commands print stays English, because coding agents read it.
+
+![The card in German and in Japanese](docs/img/languages.png)
+
+No native speaker has read the six translations. A model wrote them, and they were checked four ways: Google's back-translation, a second model translating the warnings on its own, a reviewing agent from another provider, and a third model asked what the final warnings mean without being shown the English. The warnings are written in short, plain sentences on purpose: `i18n/_sensitive.json` lists them with the idea each one must carry.
+
+If a line reads wrong in your language, it is one line in `i18n/<code>.json`: open an issue or a pull request. To add a language, copy `i18n/en.json` to `i18n/<code>.json`, using the code Omarchy has for it, and translate what you can. A string you leave out shows in English.
+
 ## Install
 
 Needs an Omarchy with shell plugins (built and tested on 4.5), `jq`, `git`, and a `wl-copy` that knows `--sensitive` (wl-clipboard 2.3 does).
@@ -106,17 +116,18 @@ secret-take OPENROUTER_API_KEY --wait  # asks you to copy it, then saves the nex
 - It removes a clipboard history entry only when the entry is exactly the key. A longer entry that contains the key, such as a whole `curl` command, is left alone.
 - It shows a few leading characters of a key so you can tell which one you copied: a known prefix such as `sk-ant-`, or otherwise an eighth of the key, four characters at most.
 - It refuses a value with a space or a single quote in it, because `.env` readers disagree on how to quote those.
-- It speaks English only.
+- The two commands print English only. The card and its notifications are translated; see Languages.
 
 ## Tests
 
 ```
 bash tests/run.sh          # the two commands, against a fake clipboard
 node tests/model.test.js   # the card's logic
+node tests/i18n.test.js    # every language has every string, with its %1 holes and commands intact
 bash tests/ui.sh           # the card itself, driven by key presses on a private display
 ```
 
-None of them touch your clipboard, your clipboard history or your files. The last one needs `xvfb-run`, `xdotool` and ImageMagick, and writes a picture of every step to `tests/shots`.
+None of them touch your clipboard, your clipboard history or your files. The last one needs `xvfb-run`, `xdotool` and ImageMagick, and writes a picture of every step to `tests/shots`. `UI_LANG=ja bash tests/ui.sh` runs it in another language.
 
 ## Credit
 

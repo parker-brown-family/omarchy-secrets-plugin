@@ -18,3 +18,5 @@ jobs:
         run: bash tests/run.sh
       - name: The card's logic
         run: node tests/model.test.js
+      - name: Every language has every string, with its placeholders and commands intact
+        run: node tests/i18n.test.js

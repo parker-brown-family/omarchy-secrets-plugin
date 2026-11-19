@@ -4,6 +4,41 @@
 # Nothing in here prints a secret value or passes one to another program as an
 # argument: values travel in shell variables and on pipes only.
 
+# Text a person reads on the desktop (the notifications), in the language
+# picked under Omarchy's Setup: i18n/<code>.json, then the base language, then
+# English, then the key itself. What goes to a terminal or to a program stays
+# English, because agents read it.
+I18N_DIR=$(readlink -f -- "${BASH_SOURCE[0]%/*}/../i18n" 2>/dev/null || true)
+
+ui_language() {
+  local code=""
+  read -r code 2>/dev/null <"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/language" || true
+  [[ $code =~ ^[a-z]{2,3}(-[A-Za-z]{2})?$ ]] || code=en
+  printf '%s' "$code"
+}
+
+# say KEY [ARG...]: the string for KEY, with %1, %2 ... replaced by the ARGs.
+say() {
+  local key=$1 lang f files=()
+  shift
+  lang=$(ui_language)
+  for f in "$I18N_DIR/$lang.json" "$I18N_DIR/${lang%%-*}.json" "$I18N_DIR/en.json"; do
+    [[ -r $f ]] && files+=("$f")
+  done
+  local program='
+    ([inputs | .[$k] | if type == "object" then .other else . end
+      | select(type == "string" and length > 0)][0] // $k) as $text
+    | reduce ($ARGS.positional | to_entries[]) as $a ($text; split("%\($a.key + 1)") | join($a.value))'
+  if ((${#files[@]})) && jq -rn --arg k "$key" "$program" "${files[@]}" --args "$@" 2>/dev/null; then
+    return 0
+  fi
+  # A catalog that will not parse must not silence the notification.
+  if [[ -r $I18N_DIR/en.json ]] && jq -rn --arg k "$key" "$program" "$I18N_DIR/en.json" --args "$@" 2>/dev/null; then
+    return 0
+  fi
+  printf '%s\n' "$key"
+}
+
 clip_read() {
   timeout 2s wl-paste --no-newline --type text 2>/dev/null || true
 }

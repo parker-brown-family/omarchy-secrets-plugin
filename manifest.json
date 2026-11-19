@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "brownfamilysports.secrets",
   "name": "Secrets",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Parker Brown",
   "description": "Save a copied API key into a project's .env from a hotkey, and take it back out of the clipboard and its history",
   "license": "MIT",
