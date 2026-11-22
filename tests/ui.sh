@@ -65,6 +65,8 @@ ShellRoot {
   Plugin.Secrets {
     Component.onCompleted: open(Quickshell.env("SECRETS_PAYLOAD") || "{}")
     onOpenedChanged: if (!opened) console.log("OVERLAY CLOSED")
+    onFilterTextChanged: console.log("FILTER " + filterText)
+    onViewChanged: console.log("VIEW " + view)
   }
 }
 EOF
@@ -125,6 +127,18 @@ cat >"$T/drive.sh" <<'EOF'
 #!/bin/bash
 # Runs inside Xvfb. $1 is the scenario.
 set -uo pipefail
+# The input-method scenario runs a real Fcitx5 with Pinyin on this private
+# display, on a private D-Bus session, with its config in the temp HOME.
+if [[ $SCENARIO == ime && -z ${IME_BUS:-} ]]; then
+  IME_BUS=1 exec dbus-run-session -- "$0"
+fi
+if [[ $SCENARIO == ime ]]; then
+  mkdir -p "$HOME/.config/fcitx5"
+  printf '[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=pinyin\n\n[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n[Groups/0/Items/1]\nName=pinyin\nLayout=\n\n[GroupOrder]\n0=Default\n' >"$HOME/.config/fcitx5/profile"
+  fcitx5 -d --disable=cloudpinyin,notificationitem,clipboard,spell >"$LOG.fcitx" 2>&1
+  for _ in $(seq 60); do grep -q "Loaded addon pinyin" "$LOG.fcitx" 2>/dev/null && break; sleep 0.25; done
+  export QT_IM_MODULE=fcitx
+fi
 shot_n=0
 shot() { shot_n=$((shot_n + 1)); sleep 0.5; import -window root "$OUT/$(printf '%s-%02d-%s' "$SCENARIO" "$shot_n" "$1").png"; }
 key() { for k in "$@"; do xdotool key --delay 40 "$k"; sleep 0.12; done; }
@@ -216,6 +230,22 @@ film)
   key Return; shot question
   key Return; shot saved
   key Return
+  ;;
+ime)
+  # Pinyin into the project filter: "ceshi" then Space commits 测试.
+  fcitx5-remote -o; sleep 0.5
+  xdotool type --delay 80 ceshi; sleep 0.4
+  shot composing
+  key space
+  shot committed
+  fcitx5-remote -c; sleep 0.3
+  ;;
+russian)
+  # Ctrl+F on a Russian layout: the key reports Cyrillic "а", not F.
+  setxkbmap ru; sleep 0.3
+  xdotool key ctrl+Cyrillic_a; sleep 0.6
+  shot folders
+  setxkbmap us
   ;;
 empty)
   shot notice
@@ -311,6 +341,22 @@ check "the key went into .env.local, filling the empty name" '[[ $(grep "^ANTHRO
 check "no .env was created beside it" '[[ ! -e $W/next-site/.env ]]'
 check "the backup copy was not touched" '[[ $(cat "$W/next-site/.env.local.bak") == "OLD_KEY=madeupmadeup" ]]'
 
+echo "ime: Chinese typed through a real input method reaches the filter"
+printf '%s' "$KEY" >"$T/clip"
+if command -v fcitx5 >/dev/null && command -v dbus-run-session >/dev/null && [[ -d /usr/share/fcitx5/pinyin ]]; then
+  scenario ime '{}'
+  check "Pinyin 'ceshi' + Space committed 测试 into the filter" 'grep -q "FILTER 测试$" "$T/log.ime"'
+  check "the raw letters never became the filter" '! grep -q "FILTER ceshi" "$T/log.ime"'
+else
+  echo "  NOT RUN  fcitx5 with Pinyin is not installed"
+fi
+echo "russian: a shortcut still works on a Cyrillic layout"
+if command -v setxkbmap >/dev/null; then
+  scenario russian '{}'
+  check "Ctrl+F on a Russian layout opened the search folders" 'grep -q "VIEW folders" "$T/log.russian"'
+else
+  echo "  NOT RUN  setxkbmap is not installed"
+fi
 echo "empty: no key on the clipboard"
 printf '%s' "just some words" >"$T/clip"
 scenario empty '{}'

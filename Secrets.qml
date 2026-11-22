@@ -66,6 +66,24 @@ Item {
   property string backView: "projects"
   property string filterText: ""
   property int selectedIndex: 0
+  // Keep the typing line in step when filterText is set from code (a reset, a new view).
+  onFilterTextChanged: if (filterInput.text !== filterText) filterInput.text = filterText
+
+  // The physical US QWERTY letter under each xkb keycode, for shortcuts only.
+  // On a Cyrillic, Greek or Hebrew layout, Ctrl+K reports a non-Latin key, so
+  // a shortcut written for Qt.Key_K would never fire; this falls back to the
+  // key's position, the way GTK and Qt menus do. A Latin layout (Dvorak, AZERTY)
+  // keeps its own letters.
+  readonly property var latinByScan: ({
+    24: Qt.Key_Q, 25: Qt.Key_W, 26: Qt.Key_E, 27: Qt.Key_R, 28: Qt.Key_T, 29: Qt.Key_Y, 30: Qt.Key_U, 31: Qt.Key_I, 32: Qt.Key_O, 33: Qt.Key_P,
+    38: Qt.Key_A, 39: Qt.Key_S, 40: Qt.Key_D, 41: Qt.Key_F, 42: Qt.Key_G, 43: Qt.Key_H, 44: Qt.Key_J, 45: Qt.Key_K, 46: Qt.Key_L,
+    52: Qt.Key_Z, 53: Qt.Key_X, 54: Qt.Key_C, 55: Qt.Key_V, 56: Qt.Key_B, 57: Qt.Key_N, 58: Qt.Key_M
+  })
+  function shortcutKey(event) {
+    if (event.key < 0x80) return event.key
+    var latin = root.latinByScan[event.nativeScanCode]
+    return latin !== undefined ? latin : event.key
+  }
 
   property var scan: ({ projects: [], roots: [], depth: 4, configured: false, config: "" })
   property bool scanLoaded: false
@@ -117,7 +135,7 @@ Item {
     // The last list is shown at once; this brings it up to date behind it.
     root.loadScan()
     root.rebuild()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() { filterInput.forceActiveFocus() })
   }
 
   function close() {
@@ -744,23 +762,24 @@ Item {
       Item {
         id: keyCatcher
         anchors.fill: parent
-        focus: true
 
-        Keys.priority: Keys.BeforeItem
+        // Focus is on filterInput, which forwards every key here first. Text is
+        // never built from key presses: an input method (Pinyin, Mozc, Hangul)
+        // only reaches a TextInput, so whatever this leaves unaccepted is typed there.
         Keys.onPressed: function(event) {
           var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
           var plain = (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) === 0
-          var typed = plain && event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127
+          var key = root.shortcutKey(event)
 
           if (event.key === Qt.Key_Escape) {
             root.back()
-          } else if (ctrl && event.key === Qt.Key_K) {
+          } else if (ctrl && key === Qt.Key_K) {
             root.source = null
             root.activeKey = null
             root.wantGit = true
             root.loadScan()
             root.go("keys")
-          } else if (ctrl && event.key === Qt.Key_F) {
+          } else if (ctrl && key === Qt.Key_F) {
             if (root.view !== "folders" && root.view !== "browse") root.backView = root.view === "keys" || root.view === "places" ? "keys" : "projects"
             root.go("folders")
           } else if (root.filterable && Util.editsFilter(event, root.filterText)) {
@@ -793,12 +812,10 @@ Item {
           } else if (root.view === "folders" && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
             var depth = root.scan.depth + (Util.readingKey(event) === Qt.Key_Right ? 1 : -1)
             if (depth >= 1 && depth <= 8) root.changeFolders(["depth", String(depth)])
-          } else if (root.view === "result" && plain && event.key === Qt.Key_A) {
+          } else if (root.view === "result" && plain && key === Qt.Key_A) {
             root.saveToAnother()
-          } else if (root.view === "places" && plain && event.key === Qt.Key_C) {
+          } else if (root.view === "places" && plain && key === Qt.Key_C) {
             root.copyPlace()
-          } else if (root.filterable && typed) {
-            root.setFilter(root.filterText + event.text)
           } else {
             return
           }
@@ -859,13 +876,29 @@ Item {
           width: parent.width
           height: root.headerHeight
 
-          Text {
-            textFormat: Text.PlainText
+          FilterInput {
+            id: filterInput
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
+            keyHandler: keyCatcher
+            // Views without a filter must refuse input-method commits, which bypass key handling.
+            readOnly: !root.filterable
+            // The name step shows the typed name as it will be saved (MY_NEW_KEY),
+            // drawn by the Text below, except while an input method is composing.
+            opacity: root.filterable && (root.view !== "name" || preeditText) ? 1 : 0
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.heading
+            onTextChanged: if (text !== root.filterText) root.setFilter(text)
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            anchors.fill: filterInput
+            verticalAlignment: Text.AlignVCenter
             text: root.shownFilter || root.placeholder
-            visible: root.filterable
+            visible: root.filterable && !filterInput.preeditText && (root.view === "name" || !root.filterText)
             color: root.foreground
             opacity: root.shownFilter ? 1 : 0.58
             font.family: root.fontFamily
